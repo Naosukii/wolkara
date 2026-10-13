@@ -2,6 +2,7 @@
 #import "Client.h"
 #import "Installation.h"
 #import "Updater.h"
+#import "CASC.h"
 #import "../App/LaunchProgressView.h"
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
@@ -50,7 +51,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _region=[defaults stringForKey:@"WoWRegion"]?:@"eu";
     if (![@[@"eu",@"us",@"kr",@"tw"] containsObject:_region]) _region=@"eu";
     _locale=[defaults stringForKey:@"WoWLocale"]?:@"enUS";
-    if (![@[@"enUS",@"esES"] containsObject:_locale]) _locale=@"enUS";
+    if (![@[@"enUS",@"esES",@"deDE"] containsObject:_locale]) _locale=@"enUS";
     return self;
 }
 - (UIButton *)button:(NSString *)identifier action:(SEL)action {
@@ -203,7 +204,32 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         NSError *error=nil;
         NSDictionary *plan=[client planForProduct:product[@"id"] region:region locale:locale error:&error];
         TKWoWInstallation *installation=plan?TKWoWInspectInstallation(self->_library,product,plan):nil;
-        BOOL updateAttempted=plan && (install || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
+        BOOL performInstall=install;
+        if(installation.state==TKWoWInstallationReady && plan[@"config"]) {
+            NSString *directory=installation.app?[self->_library workingDirectoryForApp:installation.app error:nil]:nil;
+            NSString *cascDir=directory?[directory.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Data/data"]:nil;
+            if(cascDir) {
+                NSFileManager *fm=NSFileManager.defaultManager;
+                for(NSString *name in [fm contentsOfDirectoryAtPath:cascDir error:NULL]) {
+                    if([name hasPrefix:@"index.lock"] || [name isEqualToString:@"shmem"]) {
+                        [fm removeItemAtPath:[cascDir stringByAppendingPathComponent:name] error:NULL];
+                    }
+                }
+            }
+            TKWoWCASCStore *store=cascDir?[[TKWoWCASCStore alloc] initWithDirectory:cascDir error:nil]:nil;
+            if(store) {
+                for(NSString *bootstrap in @[@"encoding",@"install",@"download",@"patch-index"]) {
+                    NSString *val=plan[@"config"][bootstrap];
+                    if(!val)continue;
+                    NSArray *keys=[[val componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+                    if(keys.count>=2 && ![store verifyKey:keys[1] size:0]) {
+                        NSLog(@"[wow-update] Bootstrap manifest '%@' (%@) is missing from CASC store; triggering update.",bootstrap,keys[1]);
+                        performInstall=YES;break;
+                    }
+                }
+            }
+        }
+        BOOL updateAttempted=plan && (performInstall || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
         if(updateAttempted) {
             __block NSString *lastPhase=nil;
             void (^progress)(NSString *,uint64_t,uint64_t)=^(NSString *phase,uint64_t done,uint64_t total) {
@@ -283,7 +309,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self configureButton:_editionButton title:[_product[@"name"] stringByAppendingString:@"  ▾"] filled:NO];
     _editionButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
-    [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
+    NSDictionary *languageNames=@{@"enUS":@"English",@"esES":@"Spanish",@"deDE":@"German"};
+    [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,languageNames[_locale]] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
@@ -396,8 +423,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 }
 - (void)choosePreference:(BOOL)region {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:region?@"Region":@"Download language" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *values=region?@[@"eu",@"us",@"kr",@"tw"]:@[@"enUS",@"esES"];
-    NSDictionary *names=@{@"eu":@"Europe",@"us":@"Americas",@"kr":@"Korea",@"tw":@"Taiwan",@"enUS":@"English",@"esES":@"Spanish"};
+    NSArray *values=region?@[@"eu",@"us",@"kr",@"tw"]:@[@"enUS",@"esES",@"deDE"];
+    NSDictionary *names=@{@"eu":@"Europe",@"us":@"Americas",@"kr":@"Korea",@"tw":@"Taiwan",@"enUS":@"English",@"esES":@"Spanish",@"deDE":@"German"};
     for (NSString *value in values) [sheet addAction:[UIAlertAction actionWithTitle:names[value] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action; if (region) self->_region=value; else self->_locale=value;
         [NSUserDefaults.standardUserDefaults setObject:value forKey:region?@"WoWRegion":@"WoWLocale"]; [self refresh];

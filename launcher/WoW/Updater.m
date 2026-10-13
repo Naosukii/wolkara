@@ -188,7 +188,9 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         } error:&failure])return NO;
         progress(@"download",downloaded,downloaded);
         // These bootstrap manifests are not necessarily in the download list.
-        for(NSString *name in @[@"encoding",@"install",@"download"]) { @autoreleasepool {
+        NSMutableArray *bootstrapNames=[@[@"encoding",@"install",@"download"] mutableCopy];
+        if(plan[@"config"][@"patch-index"]) [bootstrapNames addObject:@"patch-index"];
+        for(NSString *name in bootstrapNames) { @autoreleasepool {
             NSArray *keys=Words(plan[@"config"][name]), *sizes=Words(plan[@"config"][[name stringByAppendingString:@"-size"]]);
             if(keys.count!=2 || sizes.count!=2)return Fail(&failure,@"Missing bootstrap manifest.");
             uint64_t size=[sizes[1] longLongValue];
@@ -243,7 +245,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         if(![fm fileExistsAtPath:Join(stage,settings)]) {
             // New installs skip the unsupported region picker. Existing account,
             // input and graphics settings are never replaced.
-            NSString *portal=[plan[@"product"] hasSuffix:@"_beta"]?@"test":[plan[@"region"] uppercaseString];
+            NSString *portal=[plan[@"product"] containsString:@"beta"]?@"test":[plan[@"region"] uppercaseString];
             NSString *initial=[NSString stringWithFormat:@"SET portal \"%@\"\nSET textLocale \"%@\"\nSET audioLocale \"%@\"\n",portal,plan[@"locale"],plan[@"locale"]];
             if(!SafeWrite(stage,settings,[initial dataUsingEncoding:NSUTF8StringEncoding],&failure))return NO;
         }

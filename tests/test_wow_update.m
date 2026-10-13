@@ -184,6 +184,14 @@ int main(void){@autoreleasepool{
     [tagged appendData:Text(@"OSX")];BE(tagged,0,1);BE(tagged,1,2);BE(tagged,0x40,1);
     NSData *selection=TKWoWDownloads(tagged,@"enUS",@"eu",&error);assert(selection.length==sizeof(TKWoWDownloadEntry));
     const TKWoWDownloadEntry *picked=selection.bytes;assert([TKWoWHex(picked->key,16) isEqual:TKWoWMD5(present)]);
+    // Locale tags select German content instead of the English payload.
+    NSMutableData *localized=[download mutableCopy];((uint8_t *)localized.mutableBytes)[10]=2;
+    [localized appendData:Text(@"enUS")];BE(localized,0,1);BE(localized,3,2);BE(localized,0x80,1);
+    [localized appendData:Text(@"deDE")];BE(localized,0,1);BE(localized,3,2);BE(localized,0x40,1);
+    selection=TKWoWDownloads(localized,@"deDE",@"eu",&error);assert(selection.length==sizeof(TKWoWDownloadEntry));
+    picked=selection.bytes;assert([TKWoWHex(picked->key,16) isEqual:TKWoWMD5(present)]);
+    selection=TKWoWDownloads(localized,@"enUS",@"eu",&error);assert(selection.length==sizeof(TKWoWDownloadEntry));
+    picked=selection.bytes;assert([TKWoWHex(picked->key,16) isEqual:TKWoWMD5(asset)]);
     // A fresh synthetic install activates all files and only initial locale/portal settings.
     NSString *freshRoot=[base stringByAppendingPathComponent:@"fresh-parent/World of Warcraft"];
     resume.changed=NO;error=nil;
@@ -191,6 +199,17 @@ int main(void){@autoreleasepool{
     if(!result)fprintf(stderr,"Fresh install: %s\n",error.localizedDescription.UTF8String);assert(result);
     NSString *freshConfig=[NSString stringWithContentsOfFile:[freshRoot stringByAppendingPathComponent:@"_classic_beta_/WTF/Config.wtf"] encoding:NSUTF8StringEncoding error:&error];
     assert([freshConfig containsString:@"SET portal \"test\""] && [freshConfig containsString:@"SET textLocale \"enUS\""]);
+    // German follows the same verified download/install pipeline, with German text and audio.
+    error=nil;
+    NSDictionary *germanPlan=[resume planForProduct:@"wow_classic_beta" region:@"eu" locale:@"deDE" error:&error];
+    assert(germanPlan && !error && [germanPlan[@"locale"] isEqual:@"deDE"]);
+    NSString *germanRoot=[base stringByAppendingPathComponent:@"german/World of Warcraft"];
+    result=[[[TKWoWUpdater alloc] initWithClient:resume] updatePlan:germanPlan root:germanRoot progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    if(!result)fprintf(stderr,"German install: %s\n",error.localizedDescription.UTF8String);assert(result);
+    NSString *germanConfig=[NSString stringWithContentsOfFile:[germanRoot stringByAppendingPathComponent:@"_classic_beta_/WTF/Config.wtf"] encoding:NSUTF8StringEncoding error:&error];
+    assert([germanConfig containsString:@"SET portal \"test\""] && [germanConfig containsString:@"SET textLocale \"deDE\""] && [germanConfig containsString:@"SET audioLocale \"deDE\""]);
+    NSArray *germanRows=TKWoWTable([NSData dataWithContentsOfFile:[germanRoot stringByAppendingPathComponent:@".build.info"]],&error);
+    assert([germanRows[0][@"Tags"] containsString:@"deDE text?"] && [germanRows[0][@"Tags"] containsString:@"deDE speech?"]);
     // Reject oversized local metadata before cloning or allocating its contents.
     NSData *oversized=[NSMutableData dataWithLength:2*1024*1024+1];
     assert([oversized writeToFile:[freshRoot stringByAppendingPathComponent:@".build.info"] atomically:YES]);

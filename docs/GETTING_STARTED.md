@@ -85,7 +85,8 @@ service for memory preparation, not to stream the game from the Mac.
 ## 4. Install an edition and play
 
 Choose **Forever · Beta** for the edition with recorded gameplay, then your
-region/language and **Install**. Keep Wolkara in the foreground while downloading.
+region and download language (English, Spanish, or German) and **Install**.
+Keep Wolkara in the foreground while downloading.
 It checks for updates when opened and before launch, and installs required
 updates before enabling Play. If interrupted, reopen and retry to resume.
 

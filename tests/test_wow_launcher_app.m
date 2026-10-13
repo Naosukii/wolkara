@@ -13,12 +13,14 @@
 - (void)refresh;
 - (void)about;
 - (void)repairInstallation;
+- (void)choosePreference:(BOOL)region;
 @end
 static atomic_uint requests, revision, updates, repairs;
 static atomic_bool failure, slow, interruptRepair;
 static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
-    (void)self; (void)selector; (void)region; (void)locale;
+    (void)self; (void)selector; (void)region;
+    assert([locale isEqual:@"deDE"]);
     unsigned request=atomic_fetch_add(&requests,1);
     [NSThread sleepForTimeInterval:(request==0 || atomic_load(&slow))?0.5:0.02];
     if (atomic_load(&failure)) { if (error) *error=TKWoWError(@"Synthetic offline response"); return nil; }
@@ -55,6 +57,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
     method_setImplementation(class_getInstanceMethod(TKWoWUpdater.class,@selector(updatePlan:root:progress:error:)),(IMP)Update);
     [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
+    [NSUserDefaults.standardUserDefaults setObject:@"deDE" forKey:@"WoWLocale"];
     [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WoWRepairRequested.wow_classic_beta"];
     [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WoWInstallRequested.wow_classic_beta"];
     // Device language must not change this fork's English launcher UI.
@@ -87,9 +90,20 @@ static UIView *Find(UIView *view, NSString *identifier) {
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
+    assert([[(UIButton *)Find(self.controller.view,@"wow.preferences") configuration].title containsString:@"German"]);
     self.controller.executionMode=TKExecutionModeNone;
     assert(![self primary].enabled);
     self.controller.executionMode=TKExecutionModeDeveloperService;
+    [self.controller choosePreference:NO];
+    [self performSelector:@selector(checkDownloadLanguages) withObject:nil afterDelay:0.3];
+}
+- (void)checkDownloadLanguages {
+    UIAlertController *sheet=(id)self.controller.presentedViewController;
+    assert([sheet isKindOfClass:UIAlertController.class] && [sheet.title isEqual:@"Download language"]);
+    NSArray *titles=[sheet.actions valueForKey:@"title"];
+    assert([titles containsObject:@"English"] && [titles containsObject:@"Spanish"] && [titles containsObject:@"German"]);
+    [self capture:@"wow-download-languages.png"];
+    [self.controller dismissViewControllerAnimated:NO completion:nil];
     atomic_store(&revision,1); [self.controller refresh];
     [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
 }
@@ -195,7 +209,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     assert([credits.text containsString:@"Permission is hereby granted"]);
     assert([credits.text containsString:@"Martin Benjamins"]);
     [self.controller.navigationController popToRootViewControllerAnimated:NO];
-    puts("WoW UIKit PASS: automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses."); fflush(stdout);
+    puts("WoW UIKit PASS: German download preference and language picker, automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses."); fflush(stdout);
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
     // Leave a ready home for visual inspection; no real download or guest runs.
     [self.controller refresh];
