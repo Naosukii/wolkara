@@ -136,7 +136,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     UIView *_settings;
     UIButton *_editDone;
     UILabel *_hint;
-    UISwitch *_editSwitch, *_hapticsSwitch;
+    UISwitch *_editSwitch, *_hapticsSwitch, *_overlaySwitch;
     NSArray<UISlider *> *_sliders;
     NSArray<UILabel *> *_values;
     CAShapeLayer *_editGrid, *_editAxes;
@@ -347,6 +347,13 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     UIStackView *hapticsRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"Haptic feedback"],_hapticsSwitch]];
     hapticsRow.axis = UILayoutConstraintAxisHorizontal; hapticsRow.alignment = UIStackViewAlignmentCenter;
     [stack addArrangedSubview:hapticsRow];
+    _overlaySwitch = [UISwitch new]; _overlaySwitch.on = _preferences.performanceOverlayEnabled;
+    _overlaySwitch.accessibilityLabel = @"Performance overlay";
+    _overlaySwitch.accessibilityIdentifier = @"wolkara.controls.performanceOverlay";
+    [_overlaySwitch addTarget:self action:@selector(overlayChanged:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *overlayRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"Performance overlay (FPS & Thermals)"],_overlaySwitch]];
+    overlayRow.axis = UILayoutConstraintAxisHorizontal; overlayRow.alignment = UIStackViewAlignmentCenter;
+    [stack addArrangedSubview:overlayRow];
     _editSwitch = [UISwitch new]; _editSwitch.accessibilityLabel = @"Edit layout";
     _editSwitch.accessibilityIdentifier = @"wolkara.controls.edit";
     [_editSwitch addTarget:self action:@selector(beginEditing:) forControlEvents:UIControlEventValueChanged];
@@ -389,21 +396,26 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     _preferences.hapticsEnabled = sender.on; [_preferences save];
     if (self.configurationChanged) self.configurationChanged();
 }
+- (void)overlayChanged:(UISwitch *)sender {
+    _preferences.performanceOverlayEnabled = sender.on; [_preferences save];
+    if (self.configurationChanged) self.configurationChanged();
+}
 - (void)beginEditing:(UISwitch *)sender {
     if (!sender.on) return;
     [self reset]; _editing = YES; [_settings removeFromSuperview]; _settings = nil;
-    _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil;
+    _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil; _overlaySwitch = nil;
     [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
 }
 - (void)resetLayout {
     [self reset]; [_preferences reset];
     _sliders[0].value = 1-_preferences.opacity; _sliders[1].value = _preferences.rearScale; _sliders[2].value = _preferences.frontScale;
     _hapticsSwitch.on = _preferences.hapticsEnabled;
+    _overlaySwitch.on = _preferences.performanceOverlayEnabled;
     [self updateValues]; [self updateAppearance];
 }
 - (void)finishConfiguration {
     [self reset]; [_preferences save]; _editing = NO; [_dragOrigins removeAllObjects];
-    [_settings removeFromSuperview]; _settings = nil; _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil;
+    [_settings removeFromSuperview]; _settings = nil; _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil; _overlaySwitch = nil;
     [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
 }
 - (void)reset {

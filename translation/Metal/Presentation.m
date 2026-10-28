@@ -1,4 +1,5 @@
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
@@ -6,6 +7,56 @@
 #import "AKSupport.h"
 #include <stdatomic.h>
 #include <dlfcn.h>
+#include <os/lock.h>
+
+#define AK_FPS_HISTORY_COUNT 60
+static double s_fpsTimestamps[AK_FPS_HISTORY_COUNT];
+static NSUInteger s_fpsHead = 0;
+static NSUInteger s_fpsCount = 0;
+static os_unfair_lock s_fpsLock = OS_UNFAIR_LOCK_INIT;
+static double s_cachedFPS = 0.0;
+static double s_lastFrameDurationMs = 0.0;
+static double s_lastPresentedAt = 0.0;
+
+void AKRecordMetalFramePresented(double timestamp) {
+    if (timestamp <= 0.0) timestamp = CACurrentMediaTime();
+    os_unfair_lock_lock(&s_fpsLock);
+    if (s_lastPresentedAt > 0.0) {
+        double dt = timestamp - s_lastPresentedAt;
+        if (dt > 0.0) s_lastFrameDurationMs = dt * 1000.0;
+    }
+    s_lastPresentedAt = timestamp;
+    s_fpsTimestamps[s_fpsHead] = timestamp;
+    s_fpsHead = (s_fpsHead + 1) % AK_FPS_HISTORY_COUNT;
+    if (s_fpsCount < AK_FPS_HISTORY_COUNT) s_fpsCount++;
+    if (s_fpsCount >= 2) {
+        NSUInteger oldestIdx = (s_fpsHead + AK_FPS_HISTORY_COUNT - s_fpsCount) % AK_FPS_HISTORY_COUNT;
+        NSUInteger newestIdx = (s_fpsHead + AK_FPS_HISTORY_COUNT - 1) % AK_FPS_HISTORY_COUNT;
+        double span = s_fpsTimestamps[newestIdx] - s_fpsTimestamps[oldestIdx];
+        if (span > 0.001) {
+            s_cachedFPS = (double)(s_fpsCount - 1) / span;
+        }
+    }
+    os_unfair_lock_unlock(&s_fpsLock);
+}
+
+__attribute__((visibility("default"))) double AKMetalCurrentFPS(void) {
+    os_unfair_lock_lock(&s_fpsLock);
+    double fps = s_cachedFPS;
+    double last = s_lastPresentedAt;
+    os_unfair_lock_unlock(&s_fpsLock);
+    if (last > 0.0 && (CACurrentMediaTime() - last) > 0.5) {
+        return 0.0;
+    }
+    return fps;
+}
+
+__attribute__((visibility("default"))) double AKMetalLastFrameTimeMs(void) {
+    os_unfair_lock_lock(&s_fpsLock);
+    double ms = s_lastFrameDurationMs;
+    os_unfair_lock_unlock(&s_fpsLock);
+    return ms;
+}
 
 // Development-only presentation evidence. All normal execution stays native.
 // The sample flag also saves one GPU readback after rendering, before present.
@@ -59,11 +110,14 @@ static id<CAMetalDrawable> observedNextDrawable(id layer, SEL selector) {
 #if !TARGET_OS_SIMULATOR
         // Presentation timestamps are diagnostics; the simulator SDK lacks them.
         [drawable addPresentedHandler:^(id<MTLDrawable> frame) {
+            AKRecordMetalFramePresented(frame.presentedTime);
             [timing presentedAt:frame.presentedTime];
             uint64_t count=atomic_fetch_add(&presented,1)+1;
             if(count==1 || count==60 || count==600 || count==1800) AKLog(@"Metal frame %llu presented at %.6f",(unsigned long long)count,frame.presentedTime);
         }];
 #else
+        AKRecordMetalFramePresented(CACurrentMediaTime());
+        (void)presented;
         (void)timing;
 #endif
     }
@@ -115,7 +169,6 @@ static IMP replace(Class cls,SEL selector,IMP implementation) {
 void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device) {
     BOOL sample=[NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"];
     BOOL measure=[NSProcessInfo.processInfo.arguments containsObject:@"--measure-native"];
-    if(!sample && !measure) return;
     static dispatch_once_t once;
     dispatch_once(&once,^{
         captureFrames=sample; measureFrames=measure;

@@ -10,6 +10,7 @@ FOUNDATION_EXPORT NSNotificationName const AKGamepadLayoutDidChangeNotification;
 @property(nonatomic) CGFloat rearScale;
 @property(nonatomic) CGFloat frontScale;
 @property(nonatomic) BOOL hapticsEnabled;
+@property(nonatomic) BOOL performanceOverlayEnabled;
 - (CGRect)frameForItem:(NSString *)item defaultFrame:(CGRect)frame inBounds:(CGRect)bounds;
 - (void)moveItem:(NSString *)item toFrame:(CGRect)frame inBounds:(CGRect)bounds;
 - (void)save;

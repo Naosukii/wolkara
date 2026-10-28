@@ -30,6 +30,7 @@ static CGFloat Number(id value, CGFloat fallback) {
         self.rearScale = Number(values[@"rearScale"],1);
         self.frontScale = Number(values[@"frontScale"],1);
         self.hapticsEnabled = Number(values[@"hapticsEnabled"],1) != 0;
+        self.performanceOverlayEnabled = Number(values[@"performanceOverlayEnabled"],0) != 0;
         _positions = [NSMutableDictionary new];
         id positions = values[@"positions"];
         if ([positions isKindOfClass:NSDictionary.class]) for (NSString *key in positions) {
@@ -61,12 +62,14 @@ static CGFloat Number(id value, CGFloat fallback) {
 }
 - (void)save {
     [_defaults setObject:@{@"opacity":@(_opacity),@"rearScale":@(_rearScale),
-        @"frontScale":@(_frontScale),@"hapticsEnabled":@(_hapticsEnabled),@"positions":_positions} forKey:LayoutKey];
+        @"frontScale":@(_frontScale),@"hapticsEnabled":@(_hapticsEnabled),
+        @"performanceOverlayEnabled":@(_performanceOverlayEnabled),@"positions":_positions} forKey:LayoutKey];
     [NSNotificationCenter.defaultCenter postNotificationName:AKGamepadLayoutDidChangeNotification object:_defaults];
 }
 - (void)reset {
     self.opacity = 0.8; self.rearScale = 1; self.frontScale = 1;
     self.hapticsEnabled = YES;
+    self.performanceOverlayEnabled = NO;
     [_positions removeAllObjects]; [self save];
 }
 @end
