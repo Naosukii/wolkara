@@ -30,12 +30,17 @@ import Foundation
             guard record.deviceIdentifier == device, actual == fingerprint else { throw PairingError.authenticationFailed }
             try FileManager.default.removeItem(at:file)
             let store = try PairingKeychain()
-            try store.insertTrusted(record)
+            do {
+                try store.insertTrusted(record)
+            } catch PairingKeychain.Failure.conflict {
+                try store.forget(deviceIdentifier: device)
+                try store.insertTrusted(record)
+            }
             guard try store.load(deviceIdentifier:device)?.fingerprint == record.fingerprint else { throw PairingError.authenticationFailed }
             UserDefaults.standard.set(device,forKey:"TKEnrolledDeviceIdentifier")
             return "Verified enrollment imported into protected device-only Keychain. Temporary handoff removed. Native authorization is not yet enabled."
         } catch {
-            return "Enrollment import rejected; no existing trust pin was replaced."
+            return "Enrollment import rejected (\(error)); no existing trust pin was replaced."
         }
     }
 }
