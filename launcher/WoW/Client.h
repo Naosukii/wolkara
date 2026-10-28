@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL cancelled;
 @property(nonatomic, copy, nullable) void (^progress)(NSString *phase, uint64_t done, uint64_t total);
 - (nullable NSData *)configuration:(NSString *)key cdn:(NSString *)cdn error:(NSError **)error;
+- (nullable NSData *)productConfiguration:(NSString *)key cdn:(NSString *)cdn error:(NSError **)error;
 - (nullable NSData *)manifest:(NSString *)name config:(NSDictionary *)config cdn:(NSString *)cdn error:(NSError **)error;
 - (nullable NSData *)encodingForPlan:(NSDictionary *)plan directory:(NSString *)directory error:(NSError **)error;
 - (nullable NSData *)encodedKey:(NSString *)key size:(uint64_t)size plan:(NSDictionary *)plan

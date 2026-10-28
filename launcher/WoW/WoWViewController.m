@@ -2,6 +2,9 @@
 #import "Client.h"
 #import "Installation.h"
 #import "Updater.h"
+#import "AddonManager.h"
+#import "AddonViewController.h"
+#import "CASC.h"
 #import "../App/LaunchProgressView.h"
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
@@ -37,7 +40,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
-    UIButton *_editionButton, *_preferencesButton, *_primaryButton;
+    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_primaryButton;
     UIBarButtonItem *_refreshItem;
     UIActivityIndicatorView *_activity;
 }
@@ -50,7 +53,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _region=[defaults stringForKey:@"WoWRegion"]?:@"eu";
     if (![@[@"eu",@"us",@"kr",@"tw"] containsObject:_region]) _region=@"eu";
     _locale=[defaults stringForKey:@"WoWLocale"]?:@"enUS";
-    if (![@[@"enUS",@"esES"] containsObject:_locale]) _locale=@"enUS";
+    if (![@[@"enUS",@"esES",@"deDE"] containsObject:_locale]) _locale=@"enUS";
     return self;
 }
 - (UIButton *)button:(NSString *)identifier action:(SEL)action {
@@ -86,9 +89,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UILabel *editionLabel=Label(11,UIFontWeightSemibold,Muted()); editionLabel.text=@"GAME EDITION";
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
+    UILabel *addonsLabel=Label(11,UIFontWeightSemibold,Muted()); addonsLabel.text=@"ADD-ONS";
+    _addonsButton=[self button:@"wow.addons" action:@selector(openAddons)];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_compatibilityLabel],12);
+    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,addonsLabel,_addonsButton,_compatibilityLabel],12);
     [left setCustomSpacing:24 afterView:title];
+    [left setCustomSpacing:20 afterView:_preferencesButton];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
@@ -203,7 +209,32 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         NSError *error=nil;
         NSDictionary *plan=[client planForProduct:product[@"id"] region:region locale:locale error:&error];
         TKWoWInstallation *installation=plan?TKWoWInspectInstallation(self->_library,product,plan):nil;
-        BOOL updateAttempted=plan && (install || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
+        BOOL performInstall=install;
+        if(installation.state==TKWoWInstallationReady && plan[@"config"]) {
+            NSString *directory=installation.app?[self->_library workingDirectoryForApp:installation.app error:nil]:nil;
+            NSString *cascDir=directory?[directory.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Data/data"]:nil;
+            if(cascDir) {
+                NSFileManager *fm=NSFileManager.defaultManager;
+                for(NSString *name in [fm contentsOfDirectoryAtPath:cascDir error:NULL]) {
+                    if([name hasPrefix:@"index.lock"] || [name isEqualToString:@"shmem"]) {
+                        [fm removeItemAtPath:[cascDir stringByAppendingPathComponent:name] error:NULL];
+                    }
+                }
+            }
+            TKWoWCASCStore *store=cascDir?[[TKWoWCASCStore alloc] initWithDirectory:cascDir error:nil]:nil;
+            if(store) {
+                for(NSString *bootstrap in @[@"encoding",@"install",@"download",@"patch-index"]) {
+                    NSString *val=plan[@"config"][bootstrap];
+                    if(!val)continue;
+                    NSArray *keys=[[val componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+                    if(keys.count>=2 && ![store verifyKey:keys[1] size:0]) {
+                        NSLog(@"[wow-update] Bootstrap manifest '%@' (%@) is missing from CASC store; triggering update.",bootstrap,keys[1]);
+                        performInstall=YES;break;
+                    }
+                }
+            }
+        }
+        BOOL updateAttempted=plan && (performInstall || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
         if(updateAttempted) {
             __block NSString *lastPhase=nil;
             void (^progress)(NSString *,uint64_t,uint64_t)=^(NSString *phase,uint64_t done,uint64_t total) {
@@ -283,8 +314,17 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self configureButton:_editionButton title:[_product[@"name"] stringByAppendingString:@"  ▾"] filled:NO];
     _editionButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
-    [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
+    NSDictionary *languageNames=@{@"enUS":@"English",@"esES":@"Spanish",@"deDE":@"German"};
+    [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,languageNames[_locale]?:@"English"] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    NSArray<NSDictionary *> *installedAddons=[TKWoWAddonManager installedAddonsForProduct:_product library:_library];
+    NSString *addonsTitle=installedAddons.count>0?
+        [NSString stringWithFormat:@"Manage (%lu installed)  ›",(unsigned long)installedAddons.count]:
+        @"Manage Add-ons  ›";
+    [self configureButton:_addonsButton title:addonsTitle filled:NO];
+    _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _addonsButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _addonsButton.layer.cornerRadius=10;
+    _addonsButton.enabled=!_busy && !_starting && !_sessionUsed;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -396,8 +436,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 }
 - (void)choosePreference:(BOOL)region {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:region?@"Region":@"Download language" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *values=region?@[@"eu",@"us",@"kr",@"tw"]:@[@"enUS",@"esES"];
-    NSDictionary *names=@{@"eu":@"Europe",@"us":@"Americas",@"kr":@"Korea",@"tw":@"Taiwan",@"enUS":@"English",@"esES":@"Spanish"};
+    NSArray *values=region?@[@"eu",@"us",@"kr",@"tw"]:@[@"enUS",@"esES",@"deDE"];
+    NSDictionary *names=@{@"eu":@"Europe",@"us":@"Americas",@"kr":@"Korea",@"tw":@"Taiwan",@"enUS":@"English",@"esES":@"Spanish",@"deDE":@"German"};
     for (NSString *value in values) [sheet addAction:[UIAlertAction actionWithTitle:names[value] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action; if (region) self->_region=value; else self->_locale=value;
         [NSUserDefaults.standardUserDefaults setObject:value forKey:region?@"WoWRegion":@"WoWLocale"]; [self refresh];
@@ -419,6 +459,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             (void)a; [self repairInstallation];
         }]];
     }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Add-on Manager" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self openAddons];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"CurseForge API Key" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self promptForAPIKey];
+    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Diagnostics and logs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self diagnostics];
     }]];
@@ -432,6 +478,39 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         [self presentViewController:details animated:YES completion:nil];
     }]];
     [self presentSheet:sheet anchor:nil];
+}
+- (void)openAddons {
+    TKWoWAddonViewController *addonVC=[[TKWoWAddonViewController alloc] initWithLibrary:_library selectedProduct:_product];
+    __weak typeof(self) weakSelf=self;
+    addonVC.onProductChanged=^(NSDictionary *newProduct) {
+        [weakSelf selectProduct:newProduct];
+    };
+    addonVC.onAddonsChanged=^{
+        [weakSelf render];
+    };
+    UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:addonVC];
+    nav.modalPresentationStyle=UIModalPresentationPageSheet;
+    [self presentViewController:nav animated:YES completion:nil];
+}
+- (void)promptForAPIKey {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"CurseForge API Key"
+        message:@"Enter your CurseForge Core API key for searching and downloading add-ons. You can also specify CURSEFORGE_API_KEY in local.env."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder=@"Paste API Key here";
+        field.text=[TKWoWAddonManager apiKey];
+        field.autocapitalizationType=UITextAutocapitalizationTypeNone;
+        field.autocorrectionType=UITextAutocorrectionTypeNo;
+        field.clearButtonMode=UITextFieldViewModeWhileEditing;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a;
+        UITextField *field=alert.textFields.firstObject;
+        [TKWoWAddonManager setApiKey:field.text];
+        [self render];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {

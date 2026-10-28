@@ -264,9 +264,34 @@ static NSUInteger ManifestSize(NSString *text) {
     }
     return encoding;
 }
+- (NSData *)productConfiguration:(NSString *)key cdn:(NSString *)cdn error:(NSError **)error {
+    if (!TKWoWHashValid(key)) { if (error) *error=TKWoWError(@"Invalid content hash."); return nil; }
+    NSURL *cdnURL=[NSURL URLWithString:cdn];
+    NSString *host=cdnURL.host.length?cdnURL.host:@"level3.ssl.blizzard.com";
+    NSString *url=[NSString stringWithFormat:@"https://%@/tpr/configs/data/%@/%@/%@",host,[key substringToIndex:2],[key substringWithRange:NSMakeRange(2,2)],key];
+    NSData *data=[self fetch:[NSURL URLWithString:url] limit:2*1024*1024 error:error];
+    if(!data && ![host isEqualToString:@"level3.ssl.blizzard.com"]) {
+        NSString *fallbackUrl=[NSString stringWithFormat:@"https://level3.ssl.blizzard.com/tpr/configs/data/%@/%@/%@",[key substringToIndex:2],[key substringWithRange:NSMakeRange(2,2)],key];
+        data=[self fetch:[NSURL URLWithString:fallbackUrl] limit:2*1024*1024 error:nil];
+    }
+    if(!data) {
+        if(error && !*error) *error=TKWoWError(@"Failed to download product configuration.");
+        return nil;
+    }
+    if(![TKWoWMD5(data) isEqual:key]) { if(error)*error=TKWoWError(@"Configuration checksum mismatch.");return nil; }
+    return data;
+}
 - (NSData *)configuration:(NSString *)key cdn:(NSString *)cdn error:(NSError **)error {
-    NSData *data=[self object:key kind:@"config" cdn:cdn limit:2*1024*1024 error:error];
-    if(data && ![TKWoWMD5(data) isEqual:key]) { if(error)*error=TKWoWError(@"Configuration checksum mismatch.");return nil; }
+    NSError *directError=nil;
+    NSData *data=[self object:key kind:@"config" cdn:cdn limit:2*1024*1024 error:&directError];
+    if(!data) {
+        data=[self productConfiguration:key cdn:cdn error:nil];
+    }
+    if(!data) {
+        if(error)*error=directError?:TKWoWError(@"Failed to download configuration.");
+        return nil;
+    }
+    if(![TKWoWMD5(data) isEqual:key]) { if(error)*error=TKWoWError(@"Configuration checksum mismatch.");return nil; }
     return data;
 }
 static int CompareArchive(const void *a,const void *b) { return memcmp(a,b,16); }

@@ -776,6 +776,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // A profile's caseAliases: folders the application names in another case
     // than its installer wrote them, which only macOS's file system ignores.
     for (NSString *line in [self.library linkCaseAliasesForApp:app]) fprintf(log,"[host] %s\n",line.UTF8String);
+    NSString *cascDataDir=[directory.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Data/data"];
+    NSFileManager *fm=NSFileManager.defaultManager;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:cascDataDir error:NULL]) {
+        if ([name hasPrefix:@"index.lock"] || [name isEqualToString:@"shmem"]) {
+            fprintf(log,"[host] removing stale CASC lock/cache: %s\n",name.UTF8String);
+            [fm removeItemAtPath:[cascDataDir stringByAppendingPathComponent:name] error:NULL];
+        }
+    }
     // A profile's command line for a compatibility runtime (data from the
     // profile; nothing here changes the application). `${Documents}` in a
     // variable's value stands for the absolute Documents folder.

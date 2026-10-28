@@ -88,7 +88,8 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
     NSData *old=BuildInfo(root,error);if(!old)return NO;
     NSArray *rows=old.length?TKWoWTable(old,error):@[];if(!rows)return NO;
     NSString *header=old.length?[[[NSString alloc] initWithData:old encoding:NSUTF8StringEncoding] componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet].firstObject:
-        @"Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|CDN Key!HEX:16|Install Key!HEX:16|IM Size!DEC:4|CDN Path!STRING:0|CDN Hosts!STRING:0|Tags!STRING:0|Armadillo!STRING:0|Last Activated!STRING:0|Version!STRING:0|Keyring!HEX:16|KeyService!STRING:0|Product!STRING:0";
+        @"Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|CDN Key!HEX:16|Install Key!HEX:16|IM Size!DEC:4|CDN Path!STRING:0|CDN Hosts!STRING:0|Tags!STRING:0|Armadillo!STRING:0|Last Activated!STRING:0|Version!STRING:0|Keyring!HEX:16|KeyService!STRING:0|Product!STRING:0|Product Config!HEX:16";
+    if(![header containsString:@"Product Config"]) header=[header stringByAppendingString:@"|Product Config!HEX:16"];
     NSMutableArray *keys=[NSMutableArray new];for(NSString *column in [header componentsSeparatedByString:@"|"])[keys addObject:[column componentsSeparatedByString:@"!"][0]];
     for(NSString *required in @[@"Product",@"Active",@"Build Key",@"CDN Key",@"Version"])if(![keys containsObject:required])return Fail(error,@"Unsupported installation metadata columns.");
     NSMutableArray *updated=[NSMutableArray new];NSMutableDictionary *entry=nil;
@@ -99,10 +100,13 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
     if(!entry)entry=[NSMutableDictionary new];
     NSDictionary *v=plan[@"version"]; NSArray *install=Words(plan[@"config"][@"install"]), *sizes=Words(plan[@"config"][@"install-size"]);
     if(install.count!=2 || sizes.count!=2)return Fail(error,@"Invalid install metadata.");
+    NSString *cdnHosts=[NSURL URLWithString:plan[@"cdn"]].host;
+    if([cdnHosts hasPrefix:@"level3.ssl."]) cdnHosts=@"level3.blizzard.com us.cdn.blizzard.com";
     [entry addEntriesFromDictionary:@{@"Product":plan[@"product"],@"Branch":plan[@"region"],@"Active":@"1",
         @"Build Key":v[@"BuildConfig"],@"CDN Key":v[@"CDNConfig"],@"Version":v[@"VersionsName"],
-        @"Install Key":install[1],@"IM Size":sizes[1],@"CDN Path":@"tpr/wow",@"CDN Hosts":[NSURL URLWithString:plan[@"cdn"]].host,
+        @"Install Key":install[1],@"IM Size":sizes[1],@"CDN Path":@"tpr/wow",@"CDN Hosts":cdnHosts,
         @"Tags":[NSString stringWithFormat:@"OSX arm64 %@ %@ speech?:OSX arm64 %@ %@ text?",[plan[@"region"] uppercaseString],plan[@"locale"],[plan[@"region"] uppercaseString],plan[@"locale"]]}];
+    if(v[@"ProductConfig"]) entry[@"Product Config"]=v[@"ProductConfig"];
     [updated addObject:entry];NSMutableString *text=[[header stringByAppendingString:@"\n"] mutableCopy];
     for(NSDictionary *row in updated) {
         NSMutableArray *values=[NSMutableArray new];
@@ -145,7 +149,9 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         if(![stage.stringByResolvingSymlinksInPath isEqual:stage])return Fail(&failure,@"Staging directory must not be a symlink.");
         NSString *dataRoot=Join(stage,@"Data"), *cache=Join(job,@"cache"), *indices=Join(dataRoot,@"indices");
         if(!Directory(cache,&failure) || !Directory(dataRoot,&failure))return NO;
-        for(NSString *key in @[plan[@"version"][@"BuildConfig"],plan[@"version"][@"CDNConfig"]]) {
+        NSMutableArray *configs=[@[plan[@"version"][@"BuildConfig"],plan[@"version"][@"CDNConfig"]] mutableCopy];
+        if(plan[@"version"][@"ProductConfig"]) [configs addObject:plan[@"version"][@"ProductConfig"]];
+        for(NSString *key in configs) {
             NSData *data=[_client configuration:key cdn:plan[@"cdn"] error:&failure];if(!data)return NO;
             NSString *relative=[NSString stringWithFormat:@"Data/config/%@/%@/%@",[key substringToIndex:2],[key substringWithRange:NSMakeRange(2,2)],key];
             if(!SafeWrite(stage,relative,data,&failure))return NO;
@@ -188,7 +194,15 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         } error:&failure])return NO;
         progress(@"download",downloaded,downloaded);
         // These bootstrap manifests are not necessarily in the download list.
-        for(NSString *name in @[@"encoding",@"install",@"download"]) { @autoreleasepool {
+        NSMutableArray *bootstrap=[@[@"encoding",@"install",@"download"] mutableCopy];
+        if(plan[@"config"][@"size"]) [bootstrap addObject:@"size"];
+        if(plan[@"config"][@"patch-index"]) [bootstrap addObject:@"patch-index"];
+        for(NSString *key in plan[@"config"]) {
+            if([key hasPrefix:@"vfs-"] && ![key hasSuffix:@"-size"]) {
+                [bootstrap addObject:key];
+            }
+        }
+        for(NSString *name in bootstrap) { @autoreleasepool {
             NSArray *keys=Words(plan[@"config"][name]), *sizes=Words(plan[@"config"][[name stringByAppendingString:@"-size"]]);
             if(keys.count!=2 || sizes.count!=2)return Fail(&failure,@"Missing bootstrap manifest.");
             uint64_t size=[sizes[1] longLongValue];
@@ -243,7 +257,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         if(![fm fileExistsAtPath:Join(stage,settings)]) {
             // New installs skip the unsupported region picker. Existing account,
             // input and graphics settings are never replaced.
-            NSString *portal=[plan[@"product"] hasSuffix:@"_beta"]?@"test":[plan[@"region"] uppercaseString];
+            NSString *portal=[plan[@"product"] containsString:@"beta"]?@"test":[plan[@"region"] uppercaseString];
             NSString *initial=[NSString stringWithFormat:@"SET portal \"%@\"\nSET textLocale \"%@\"\nSET audioLocale \"%@\"\n",portal,plan[@"locale"],plan[@"locale"]];
             if(!SafeWrite(stage,settings,[initial dataUsingEncoding:NSUTF8StringEncoding],&failure))return NO;
         }

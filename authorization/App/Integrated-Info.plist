@@ -14,6 +14,8 @@
 	<string>$(TOLKARA_MODE)</string>
 	<key>TKPairingKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)</string>
+	<key>CurseForgeAPIKey</key>
+	<string>$(CURSEFORGE_API_KEY)</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow World of Warcraft in Wolkara to use the microphone for in-game voice chat.</string>
 </dict>

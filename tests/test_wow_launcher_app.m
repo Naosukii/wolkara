@@ -87,9 +87,20 @@ static UIView *Find(UIView *view, NSString *identifier) {
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
+    assert(Find(self.controller.view,@"wow.addons")!=nil);
     self.controller.executionMode=TKExecutionModeNone;
     assert(![self primary].enabled);
     self.controller.executionMode=TKExecutionModeDeveloperService;
+    [self.controller choosePreference:NO];
+    [self performSelector:@selector(checkDownloadLanguages) withObject:nil afterDelay:0.3];
+}
+- (void)checkDownloadLanguages {
+    UIAlertController *sheet=(id)self.controller.presentedViewController;
+    assert([sheet isKindOfClass:UIAlertController.class] && [sheet.title isEqual:@"Download language"]);
+    NSArray *titles=[sheet.actions valueForKey:@"title"];
+    assert([titles containsObject:@"English"] && [titles containsObject:@"Spanish"] && [titles containsObject:@"German"]);
+    [self capture:@"wow-download-languages.png"];
+    [self.controller dismissViewControllerAnimated:NO completion:nil];
     atomic_store(&revision,1); [self.controller refresh];
     [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
 }

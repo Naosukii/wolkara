@@ -12,6 +12,8 @@
 	<string>$(GUEST_RUNTIME)</string>
 	<key>TolkaraPreselectedExecutionMode</key>
 	<string>$(TOLKARA_MODE)</string>
+	<key>CurseForgeAPIKey</key>
+	<string>$(CURSEFORGE_API_KEY)</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow World of Warcraft in Wolkara to use the microphone for in-game voice chat.</string>
 </dict>
