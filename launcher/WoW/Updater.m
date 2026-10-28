@@ -254,12 +254,29 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
             if([fm fileExistsAtPath:source] && ![self cloneRoot:source into:destination progress:progress error:&failure])return NO;
         }
         NSString *settings=Join(folder,@"WTF/Config.wtf");
-        if(![fm fileExistsAtPath:Join(stage,settings)]) {
+        NSString *settingsPath=Join(stage,settings);
+        if(![fm fileExistsAtPath:settingsPath]) {
             // New installs skip the unsupported region picker. Existing account,
             // input and graphics settings are never replaced.
             NSString *portal=[plan[@"product"] containsString:@"beta"]?@"test":[plan[@"region"] uppercaseString];
             NSString *initial=[NSString stringWithFormat:@"SET portal \"%@\"\nSET textLocale \"%@\"\nSET audioLocale \"%@\"\n",portal,plan[@"locale"],plan[@"locale"]];
             if(!SafeWrite(stage,settings,[initial dataUsingEncoding:NSUTF8StringEncoding],&failure))return NO;
+        } else {
+            NSError *readError=nil;
+            NSString *content=[NSString stringWithContentsOfFile:settingsPath encoding:NSUTF8StringEncoding error:&readError];
+            if([content containsString:@"SET textLocale "] || [content containsString:@"SET audioLocale "]) {
+                NSMutableString *updated=[NSMutableString new];
+                for(NSString *line in [content componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+                    if([line hasPrefix:@"SET textLocale "]) {
+                        [updated appendFormat:@"SET textLocale \"%@\"\n",plan[@"locale"]];
+                    } else if([line hasPrefix:@"SET audioLocale "]) {
+                        [updated appendFormat:@"SET audioLocale \"%@\"\n",plan[@"locale"]];
+                    } else if(line.length) {
+                        [updated appendFormat:@"%@\n",line];
+                    }
+                }
+                SafeWrite(stage,settings,[updated dataUsingEncoding:NSUTF8StringEncoding],&failure);
+            }
         }
         if([self cancelled:&failure])return NO;
         progress(@"activate",0,0);

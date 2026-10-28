@@ -282,7 +282,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             self->_checkedAt=plan?NSDate.date:nil; self->_busy=NO; self->_updating=NO; self->_updateError=updateAttempted && error; [self render];
             // Returning from the background or changing edition invalidates this request.
             if (launch && !error && !client.cancelled && installation.state==TKWoWInstallationReady && installation.app && !self->_sessionUsed &&
-                self.view.window && self.navigationController.topViewController==self && self.startApp) self.startApp(installation.app);
+                self.view.window && self.navigationController.topViewController==self && self.startApp) {
+                [self applyLocaleToConfig:self->_locale];
+                self.startApp(installation.app);
+            }
         });
     });
 }
@@ -434,12 +437,45 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     }]];
     [self presentSheet:sheet anchor:_editionButton];
 }
+- (void)applyLocaleToConfig:(NSString *)locale {
+    if(!locale.length) return;
+    NSString *directory=_installation.app?[_library workingDirectoryForApp:_installation.app error:nil]:nil;
+    if(!directory) {
+        NSString *doc=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+        directory=[[doc stringByAppendingPathComponent:@"World of Warcraft"] stringByAppendingPathComponent:_product[@"folder"]?:@"_classic_beta_"];
+    }
+    NSString *configPath=[directory stringByAppendingPathComponent:@"WTF/Config.wtf"];
+    NSError *readError=nil;
+    NSString *content=[NSString stringWithContentsOfFile:configPath encoding:NSUTF8StringEncoding error:&readError];
+    if(!content.length) return;
+    NSMutableString *updated=[NSMutableString new];
+    BOOL foundText=NO, foundAudio=NO;
+    for(NSString *line in [content componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        if([line hasPrefix:@"SET textLocale "]) {
+            [updated appendFormat:@"SET textLocale \"%@\"\n",locale];
+            foundText=YES;
+        } else if([line hasPrefix:@"SET audioLocale "]) {
+            [updated appendFormat:@"SET audioLocale \"%@\"\n",locale];
+            foundAudio=YES;
+        } else if(line.length) {
+            [updated appendFormat:@"%@\n",line];
+        }
+    }
+    if(!foundText) [updated appendFormat:@"SET textLocale \"%@\"\n",locale];
+    if(!foundAudio) [updated appendFormat:@"SET audioLocale \"%@\"\n",locale];
+    [updated writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
 - (void)choosePreference:(BOOL)region {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:region?@"Region":@"Download language" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     NSArray *values=region?@[@"eu",@"us",@"kr",@"tw"]:@[@"enUS",@"esES",@"deDE"];
     NSDictionary *names=@{@"eu":@"Europe",@"us":@"Americas",@"kr":@"Korea",@"tw":@"Taiwan",@"enUS":@"English",@"esES":@"Spanish",@"deDE":@"German"};
     for (NSString *value in values) [sheet addAction:[UIAlertAction actionWithTitle:names[value] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        (void)action; if (region) self->_region=value; else self->_locale=value;
+        (void)action;
+        if (region) self->_region=value;
+        else {
+            self->_locale=value;
+            [self applyLocaleToConfig:value];
+        }
         [NSUserDefaults.standardUserDefaults setObject:value forKey:region?@"WoWRegion":@"WoWLocale"]; [self refresh];
     }]];
     [self presentSheet:sheet anchor:_preferencesButton];
