@@ -4,6 +4,8 @@
 #import "TextInput.h"
 #import "TouchControls.h"
 #import "TouchGamepad.h"
+#import "TouchGamepadLayout.h"
+#import "AKPerformanceOverlay.h"
 #import <GameController/GameController.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -249,6 +251,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 @implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime;
     AKTouchControls *_touchControls;
     AKTouchGamepad *_touchGamepad;
+    AKPerformanceOverlay *_performanceOverlay;
     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
     NSTimeInterval _lastTouchClickTime;
     CGPoint _lastTouchClickPoint;
@@ -282,6 +285,13 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
             [_touchControls.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8],
             [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
         ]];
+        _performanceOverlay = [[AKPerformanceOverlay alloc] initWithFrame:CGRectZero];
+        _performanceOverlay.layer.zPosition = 90000;
+        [self addSubview:_performanceOverlay];
+        AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+        _performanceOverlay.hidden = !layout.performanceOverlayEnabled;
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(performanceOverlayLayoutChanged:)
+            name:AKGamepadLayoutDidChangeNotification object:nil];
         _touchGamepad = [[AKTouchGamepad alloc] initWithHostView:self];
         __weak AKHostView *weakSelf = self;
         _touchGamepad.visibilityChanged = ^(BOOL visible) {
@@ -294,6 +304,11 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         [self touchTrackpadChanged:_touchControls.trackpadEnabled];
     }
     return self;
+}
+- (void)performanceOverlayLayoutChanged:(NSNotification *)note {
+    (void)note;
+    AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+    _performanceOverlay.hidden = !layout.performanceOverlayEnabled;
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow]; [_touchGamepad refresh];

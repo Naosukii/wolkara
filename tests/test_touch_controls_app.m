@@ -2,6 +2,7 @@
 #import "AppKit.h"
 #import "TouchControls.h"
 #import "TouchGamepad.h"
+#import "AKPerformanceOverlay.h"
 #include <assert.h>
 
 @interface AKInputFixtureView : NSView
@@ -394,6 +395,15 @@ static void AKFixtureInputSource(void *context) {
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
                 [controls setGamepadVisible:NO]; [host layoutIfNeeded];
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
+                AKPerformanceOverlay *overlay = [host valueForKey:@"_performanceOverlay"];
+                assert(overlay != nil);
+                assert(overlay.hidden);
+                [overlay updateMetrics];
+                assert(overlay.isAccessibilityElement);
+                [overlay setExpanded:YES];
+                assert(overlay.isExpanded);
+                [overlay setExpanded:NO];
+                assert(!overlay.isExpanded);
                 [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
                     (void)timer;
                     assert([fixture.text isEqual:expected]);

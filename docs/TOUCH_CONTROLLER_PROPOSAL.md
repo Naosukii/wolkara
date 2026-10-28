@@ -48,10 +48,16 @@ buttons remain pinned at the bottom. The pointer icon toggles the trackpad.
   it reaches its outer limit. Holding or sliding around the rim stays silent;
   moving inward or lifting the finger rearms the cue. Turning this off silences
   both controller and toolbar feedback without changing game input.
+- **Performance overlay:** off by default, saved on this device. Toggles a
+  movable HUD showing live Metal frame rate and frame presentation time, system
+  thermal throttling state (Nominal, Fair, Serious, Critical), battery level,
+  charging state, resident memory footprint and headroom. Tapping toggles
+  between a compact pill and an expanded card; dragging repositions the HUD
+  within the safe area and remembers its position across launches.
 - **Edit layout:** drag either stick/ring group, each rear button, or `+`.
   Done editing exits the editor. Reset to defaults restores all sizes, opacity
-  and positions, and enables haptic feedback, without changing whether automatic
-  controls are enabled.
+  and positions, enables haptic feedback, and hides the performance overlay,
+  without changing whether automatic controls are enabled.
   A 24-point grid, symmetric about the safe area's center, appears behind the
   controls while editing. Dashed horizontal/vertical center guides help align
   both sides. These are visual references: dragging stays free, saved positions

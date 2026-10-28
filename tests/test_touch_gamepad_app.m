@@ -156,13 +156,14 @@ static void TestPreferences(void) {
     layout.opacity=NAN; layout.rearScale=INFINITY; layout.frontScale=-INFINITY;
     assert(layout.opacity==0.8 && layout.rearScale==1 && layout.frontScale==1);
     CGRect bounds=CGRectMake(20,10,500,300), frame=CGRectMake(200,60,120,120);
-    [layout moveItem:@"menu" toFrame:frame inBounds:bounds]; layout.opacity=.4; layout.hapticsEnabled=NO; [layout save];
+    [layout moveItem:@"menu" toFrame:frame inBounds:bounds]; layout.opacity=.4; layout.hapticsEnabled=NO;
+    layout.performanceOverlayEnabled=YES; [layout save];
     layout=[[AKGamepadLayout alloc] initWithDefaults:defaults];
-    assert(layout.opacity==.4 && !layout.hapticsEnabled);
+    assert(layout.opacity==.4 && !layout.hapticsEnabled && layout.performanceOverlayEnabled);
     assert(CGRectEqualToRect([layout frameForItem:@"menu" defaultFrame:frame inBounds:bounds],frame));
     CGRect small=CGRectMake(0,0,220,120);
     assert(CGRectContainsRect(small,[layout frameForItem:@"menu" defaultFrame:frame inBounds:small]));
-    [layout reset]; assert(layout.opacity==.8 && layout.frontScale==1 && layout.hapticsEnabled);
+    [layout reset]; assert(layout.opacity==.8 && layout.frontScale==1 && layout.hapticsEnabled && !layout.performanceOverlayEnabled);
     assert(CGRectEqualToRect([layout frameForItem:@"menu" defaultFrame:frame inBounds:bounds],frame));
     [defaults removePersistentDomainForName:suite];
 }
@@ -236,6 +237,8 @@ static void TestNativeInput(UIView *host, AKPreviewGamepad *manager) {
     assert(!manager.feedback.enabled && manager.feedback.buttons==silentButtons && manager.feedback.limits==silentLimits);
     UISwitch *haptics=(id)Find(host,@"wolkara.controls.haptics"); assert(haptics.on);
     haptics.on=NO; [haptics sendActionsForControlEvents:UIControlEventValueChanged];
+    UISwitch *overlay=(id)Find(host,@"wolkara.controls.performanceOverlay"); assert(overlay && !overlay.on);
+    overlay.on=YES; [overlay sendActionsForControlEvents:UIControlEventValueChanged];
     UISlider *scale=(id)Find(host,@"wolkara.controls.frontScale");
     scale.value=1.3; [scale sendActionsForControlEvents:UIControlEventValueChanged]; [host layoutIfNeeded];
     UIView *cluster=Find(host,@"wolkara.layout.left"); assert(cluster.frame.size.width>216);
@@ -274,6 +277,7 @@ static void TestNativeInput(UIView *host, AKPreviewGamepad *manager) {
     AKGamepadLayout *saved=[[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
     assert(fabs(saved.frontScale-1.3)<.001 && fabs(saved.opacity-.3)<.001);
     assert(!saved.hapticsEnabled);
+    assert(saved.performanceOverlayEnabled);
     [(UIButton *)Find(host,@"wolkara.layout.done") sendActionsForControlEvents:UIControlEventTouchUpInside];
     [Button(host,GCInputButtonA) sendActionsForControlEvents:UIControlEventTouchDown]; Drain();
     assert(pad.buttonA.pressed && manager.feedback.buttons==silentButtons);
@@ -281,6 +285,7 @@ static void TestNativeInput(UIView *host, AKPreviewGamepad *manager) {
     [manager toggleSettings];
     [(UIButton *)Find(host,@"wolkara.controls.reset") sendActionsForControlEvents:UIControlEventTouchUpInside];
     assert(((UISwitch *)Find(host,@"wolkara.controls.haptics")).on);
+    assert(!((UISwitch *)Find(host,@"wolkara.controls.performanceOverlay")).on);
     [manager toggleSettings]; [host layoutIfNeeded];
     [Button(host,GCInputButtonA) sendActionsForControlEvents:UIControlEventTouchDown];
     [Button(host,GCInputButtonA) sendActionsForControlEvents:UIControlEventTouchUpInside];
