@@ -18,5 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)finishStartupWithMessage:(NSString *)message failed:(BOOL)failed;
 - (void)openAddons;
 - (void)promptForAPIKey;
+- (void)checkAddonUpdatesPromptUser:(BOOL)promptUser;
+- (void)exportBackup;
+- (void)importBackup;
 @end
 NS_ASSUME_NONNULL_END

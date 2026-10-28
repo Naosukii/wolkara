@@ -32,6 +32,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g \
     launcher/WoW/Manifest.m launcher/WoW/AddonManager.m tests/test_wow_addon_manager.m \
     -o build/wow-launcher/test_wow_addon_manager
 build/wow-launcher/test_wow_addon_manager
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g \
+    -fsanitize=address,undefined -fno-omit-frame-pointer -framework Foundation -lz \
+    launcher/WoW/BackupManager.m tests/test_wow_backup_manager.m \
+    -o build/wow-launcher/test_wow_backup_manager
+build/wow-launcher/test_wow_backup_manager
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O2 -framework Foundation -lz \
     launcher/WoW/Manifest.m launcher/WoW/CASC.m launcher/WoW/Client.m tools/wow_cdn.m \
     -o build/wow-launcher/wow_cdn

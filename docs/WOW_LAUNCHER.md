@@ -167,6 +167,17 @@ when the screen or edition changes, and registers newly installed executables
 with the existing library. Its normal flow needs no running Battle.net on a Mac
 for downloading patches. It does not automate login or gameplay.
 
+### Settings and add-ons backup and restore (2026-10-18)
+
+`BackupManager.m` adds ZIP export and restore for `WTF/` (settings, macros, keybindings,
+SavedVariables) and `Interface/AddOns/`:
+- **Export**: Generates standard ZIP archives via `NSFileCoordinator` and APFS staging,
+  presented through `UIActivityViewController` for saving to iCloud Drive, Files, or AirDrop.
+- **Restore**: Discovers `WTF` and `Interface` folders within chosen backup archives,
+  preserves existing settings in `.backup_pre_restore` before overwriting, and validates
+  ZIP entries against path traversal attacks and disallowed binary executables.
+- **Accessibility**: Available in both the main **Settings** sheet and the **Add-on Manager** toolbar.
+
 ## Remaining validation and limits
 
 - Cellular-only startup failed on the user's first outdoor test (2026-10-04)

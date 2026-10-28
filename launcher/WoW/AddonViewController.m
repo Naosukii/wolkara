@@ -1,5 +1,6 @@
 #import "AddonViewController.h"
 #import "AddonManager.h"
+#import "BackupManager.h"
 #import "Manifest.h"
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
@@ -125,6 +126,7 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
     NSArray<NSDictionary *> *_installedAddons;
     NSArray<NSDictionary *> *_searchResults;
     NSMutableSet<NSNumber *> *_installingModIds;
+    NSMutableDictionary<NSNumber *, NSDictionary *> *_availableUpdatesByModId;
     NSCache<NSString *, UIImage *> *_imageCache;
     BOOL _isSearching;
 }
@@ -135,6 +137,7 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
     _product = product ?: TKWoWProducts()[0];
     _manager = [TKWoWAddonManager new];
     _installingModIds = [NSMutableSet new];
+    _availableUpdatesByModId = [NSMutableDictionary new];
     _imageCache = [NSCache new];
     self.title = @"ADD-ON MANAGER";
     return self;
@@ -157,11 +160,44 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
                                                                action:@selector(promptForAPIKey)];
     keyItem.tintColor = Gold();
     keyItem.accessibilityLabel = @"CurseForge API Key";
-    self.navigationItem.rightBarButtonItem = keyItem;
+
+    UIBarButtonItem *backupItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.doc"]
+                                                                   style:UIBarButtonItemStylePlain
+                                                                  target:self
+                                                                  action:@selector(backupMenu:)];
+    backupItem.tintColor = Gold();
+    backupItem.accessibilityLabel = @"Backup and Restore";
+    self.navigationItem.rightBarButtonItems = @[keyItem, backupItem];
 
     [self buildHeaderView];
     [self buildTableView];
     [self reloadInstalledAddons];
+}
+
+- (void)backupMenu:(UIBarButtonItem *)sender {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"WTF & Add-ons Backup"
+                                                                   message:@"Export or restore your keybindings, macros, and interface configurations."
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Export Backup" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a;
+        [TKWoWBackupManager presentExportForProduct:self->_product library:self->_library fromViewController:self anchorItem:sender];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Import / Restore Backup" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a;
+        __weak typeof(self) weakSelf = self;
+        [TKWoWBackupManager presentImportForProduct:self->_product library:self->_library fromViewController:self completion:^(BOOL success) {
+            if (success) {
+                [weakSelf reloadInstalledAddons];
+                if (weakSelf.onAddonsChanged) weakSelf.onAddonsChanged();
+            }
+        }];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+        sheet.popoverPresentationController.barButtonItem = sender;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)dismissAction {
@@ -379,6 +415,24 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
             _emptyLabel.hidden = YES;
         }
     }
+    [self checkForUpdates];
+}
+
+- (void)checkForUpdates {
+    if (![TKWoWAddonManager hasApiKey]) return;
+    NSDictionary *currentProd = _product;
+    [_manager checkForUpdatesForProduct:currentProd library:_library completion:^(NSArray<NSDictionary *> *updates, NSError *error) {
+        (void)error;
+        if (![self->_product[@"id"] isEqual:currentProd[@"id"]]) return;
+        [self->_availableUpdatesByModId removeAllObjects];
+        for (NSDictionary *u in updates ?: @[]) {
+            NSNumber *mId = u[@"modId"];
+            if (mId) self->_availableUpdatesByModId[mId] = u;
+        }
+        if (self->_tabSegment.selectedSegmentIndex == 0) {
+            [self->_tableView reloadData];
+        }
+    }];
 }
 
 - (void)executeSearch:(NSString *)query {
@@ -549,9 +603,15 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
 
         NSDictionary *installedRecord = [self installedRecordForModId:modId name:name];
         BOOL installed = isInstalledTab || (installedRecord != nil);
+        NSDictionary *updateInfo = (modId && modId.integerValue != 0) ? _availableUpdatesByModId[modId] : nil;
 
         UIButtonConfiguration *btnConfig;
-        if (installed) {
+        if (updateInfo) {
+            btnConfig = UIButtonConfiguration.filledButtonConfiguration;
+            btnConfig.title = @"Update";
+            btnConfig.baseBackgroundColor = Gold();
+            btnConfig.baseForegroundColor = [UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1];
+        } else if (installed) {
             btnConfig = UIButtonConfiguration.tintedButtonConfiguration;
             btnConfig.title = @"Uninstall";
             btnConfig.baseBackgroundColor = [UIColor colorWithRed:0.95 green:0.3 blue:0.3 alpha:0.18];
@@ -567,7 +627,9 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
 
         [cell.actionButton removeTarget:nil action:NULL forControlEvents:UIControlEventTouchUpInside];
         cell.actionButton.tag = indexPath.row;
-        if (installed) {
+        if (updateInfo) {
+            [cell.actionButton addTarget:self action:@selector(updateButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+        } else if (installed) {
             [cell.actionButton addTarget:self action:@selector(uninstallButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
         } else {
             [cell.actionButton addTarget:self action:@selector(installButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -595,6 +657,15 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
                                                                    message:summary
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
+    NSDictionary *updateInfo = (modId && modId.integerValue != 0) ? _availableUpdatesByModId[modId] : nil;
+    if (updateInfo) {
+        NSString *updateTitle = [NSString stringWithFormat:@"Update to %@", updateInfo[@"updateVersion"] ?: @"latest"];
+        [sheet addAction:[UIAlertAction actionWithTitle:updateTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            [self performInstall:updateInfo[@"addon"] file:updateInfo[@"updateFile"]];
+        }]];
+    }
+
     NSDictionary *installed = [self installedRecordForModId:modId name:name];
     if (installed) {
         NSArray *folders = installed[@"folders"];
@@ -619,6 +690,18 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
     sheet.popoverPresentationController.sourceView = self.view;
     sheet.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2, 1, 1);
     [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)updateButtonTapped:(UIButton *)sender {
+    BOOL isInstalledTab = (_tabSegment.selectedSegmentIndex == 0);
+    NSArray *list = isInstalledTab ? _installedAddons : _searchResults;
+    if (sender.tag < 0 || sender.tag >= (NSInteger)list.count) return;
+    NSDictionary *addon = list[sender.tag];
+    NSNumber *modId = TKSafeNumber(addon[@"id"], nil);
+    NSDictionary *updateInfo = (modId && modId.integerValue != 0) ? _availableUpdatesByModId[modId] : nil;
+    if (updateInfo) {
+        [self performInstall:updateInfo[@"addon"] file:updateInfo[@"updateFile"]];
+    }
 }
 
 - (void)installButtonTapped:(UIButton *)sender {
@@ -704,7 +787,10 @@ static UIColor *DarkBg(void) { return [UIColor colorWithRed:0.025 green:0.045 bl
 
 - (void)performInstall:(NSDictionary *)addon file:(nullable NSDictionary *)file {
     NSNumber *modId = TKSafeNumber(addon[@"id"], nil);
-    if (modId && modId.integerValue != 0) [_installingModIds addObject:modId];
+    if (modId && modId.integerValue != 0) {
+        [_installingModIds addObject:modId];
+        [_availableUpdatesByModId removeObjectForKey:modId];
+    }
     [_tableView reloadData];
 
     [_manager installAddon:addon file:file product:_product library:_library progress:nil completion:^(BOOL success, NSError *error) {

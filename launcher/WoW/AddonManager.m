@@ -772,4 +772,146 @@ static inline uint32_t ReadLE32(const uint8_t *p) {
     }
 }
 
+- (void)checkForUpdatesForProduct:(NSDictionary *)product
+                          library:(nullable TKAppLibrary *)library
+                       completion:(void (^)(NSArray<NSDictionary *> * _Nullable updates, NSError * _Nullable error))completion {
+    NSString *apiKey = [TKWoWAddonManager apiKey];
+    if (apiKey.length == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(@[], AddonError(@"CurseForge API Key is not configured.", 401));
+        });
+        return;
+    }
+
+    NSArray<NSDictionary *> *installed = [TKWoWAddonManager installedAddonsForProduct:product library:library];
+    NSMutableArray<NSDictionary *> *curseAddons = [NSMutableArray new];
+    for (NSDictionary *item in installed) {
+        if (![item isKindOfClass:NSDictionary.class]) continue;
+        NSNumber *modId = TKSafeNumber(item[@"id"], nil);
+        if (modId && modId.integerValue > 0) {
+            [curseAddons addObject:item];
+        }
+    }
+
+    if (curseAddons.count == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(@[], nil);
+        });
+        return;
+    }
+
+    NSString *productId = product[@"id"] ?: @"wow";
+    NSMutableArray<NSDictionary *> *updates = [NSMutableArray new];
+    dispatch_group_t group = dispatch_group_create();
+
+    for (NSDictionary *addon in curseAddons) {
+        NSNumber *modId = TKSafeNumber(addon[@"id"], nil);
+        if (!modId || modId.integerValue == 0) continue;
+
+        dispatch_group_enter(group);
+        [self fetchFilesForModId:modId completion:^(NSArray<NSDictionary *> *files, NSError *fetchErr) {
+            if (!fetchErr && [files isKindOfClass:NSArray.class] && files.count > 0) {
+                NSDictionary *bestFile = [TKWoWAddonManager bestFileForProduct:productId fromFiles:files];
+                if (bestFile && [TKWoWAddonManager file:bestFile matchesProduct:productId]) {
+                    NSNumber *bestFileId = TKSafeNumber(bestFile[@"id"], nil);
+                    NSNumber *curFileId = TKSafeNumber(addon[@"fileId"], @(0));
+
+                    BOOL isNewer = NO;
+                    if (bestFileId && bestFileId.longLongValue > 0) {
+                        if (curFileId && curFileId.longLongValue > 0) {
+                            isNewer = (bestFileId.longLongValue > curFileId.longLongValue);
+                        } else {
+                            NSString *bestVer = TKSafeString(bestFile[@"displayName"], TKSafeString(bestFile[@"fileName"], @""));
+                            NSString *curVer = TKSafeString(addon[@"version"], @"");
+                            if (curVer.length > 0 && bestVer.length > 0 && ![bestVer isEqual:curVer]) {
+                                isNewer = YES;
+                            }
+                        }
+                    }
+
+                    if (isNewer) {
+                        NSString *modName = TKSafeString(addon[@"displayName"], TKSafeString(addon[@"name"], @"Add-on"));
+                        NSString *curVersion = TKSafeString(addon[@"version"], @"");
+                        NSString *updateVersion = TKSafeString(bestFile[@"displayName"], TKSafeString(bestFile[@"fileName"], @"New version"));
+
+                        @synchronized (updates) {
+                            [updates addObject:@{
+                                @"addon": addon,
+                                @"updateFile": bestFile,
+                                @"modId": modId,
+                                @"name": modName,
+                                @"currentVersion": curVersion,
+                                @"updateVersion": updateVersion,
+                                @"currentFileId": curFileId ?: @(0),
+                                @"updateFileId": bestFileId ?: @(0)
+                            }];
+                        }
+                    }
+                }
+            }
+            dispatch_group_leave(group);
+        }];
+    }
+
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        [updates sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            NSString *na = a[@"name"] ?: @"";
+            NSString *nb = b[@"name"] ?: @"";
+            return [na localizedCaseInsensitiveCompare:nb];
+        }];
+        completion(updates, nil);
+    });
+}
+
+- (void)installUpdates:(NSArray<NSDictionary *> *)updates
+               product:(NSDictionary *)product
+               library:(nullable TKAppLibrary *)library
+              progress:(nullable void (^)(NSUInteger completed, NSUInteger total, NSString *addonName))progress
+             completion:(void (^)(NSArray<NSError *> * _Nullable errors))completion {
+    if (![updates isKindOfClass:NSArray.class] || updates.count == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(@[]);
+        });
+        return;
+    }
+
+    NSMutableArray<NSError *> *errors = [NSMutableArray new];
+    [self installNextUpdateInList:updates atIndex:0 errors:errors product:product library:library progress:progress completion:completion];
+}
+
+- (void)installNextUpdateInList:(NSArray<NSDictionary *> *)updates
+                        atIndex:(NSUInteger)index
+                         errors:(NSMutableArray<NSError *> *)errors
+                        product:(NSDictionary *)product
+                        library:(nullable TKAppLibrary *)library
+                       progress:(nullable void (^)(NSUInteger completed, NSUInteger total, NSString *addonName))progress
+                     completion:(void (^)(NSArray<NSError *> * _Nullable errors))completion {
+    if (index >= updates.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(errors);
+        });
+        return;
+    }
+
+    NSDictionary *item = updates[index];
+    NSDictionary *addon = item[@"addon"] ?: item;
+    NSDictionary *file = item[@"updateFile"];
+    NSString *name = TKSafeString(item[@"name"], TKSafeString(addon[@"displayName"], addon[@"name"]));
+
+    if (progress) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            progress(index + 1, updates.count, name);
+        });
+    }
+
+    [self installAddon:addon file:file product:product library:library progress:nil completion:^(BOOL success, NSError *err) {
+        if (!success && err) {
+            @synchronized (errors) {
+                [errors addObject:err];
+            }
+        }
+        [self installNextUpdateInList:updates atIndex:index + 1 errors:errors product:product library:library progress:progress completion:completion];
+    }];
+}
+
 @end

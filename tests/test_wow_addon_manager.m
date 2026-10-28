@@ -77,6 +77,32 @@ static NSData *CreateZipData(NSDictionary<NSString *, NSString *> *files) {
     return body;
 }
 
+@interface TestUpdateAddonManager : TKWoWAddonManager
+@property(nonatomic, strong) NSArray *mockFiles;
+@property(nonatomic, strong) NSMutableArray *installedUpdateCalls;
+@end
+
+@implementation TestUpdateAddonManager
+- (void)fetchFilesForModId:(NSNumber *)modId completion:(void (^)(NSArray<NSDictionary *> *files, NSError *error))completion {
+    (void)modId;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        completion(self.mockFiles, nil);
+    });
+}
+- (void)installAddon:(NSDictionary *)addon
+                file:(nullable NSDictionary *)selectedFile
+             product:(NSDictionary *)product
+             library:(nullable TKAppLibrary *)library
+            progress:(nullable void (^)(float progress, NSString *status))progress
+          completion:(void (^)(BOOL success, NSError * _Nullable error))completion {
+    (void)selectedFile; (void)product; (void)library; (void)progress;
+    [self.installedUpdateCalls addObject:addon];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        completion(YES, nil);
+    });
+}
+@end
+
 int main(void) {
     @autoreleasepool {
         // 1. Test API Key configuration
@@ -239,7 +265,90 @@ int main(void) {
         // Cleanup temp dir
         [NSFileManager.defaultManager removeItemAtPath:tmpDir error:NULL];
 
-        printf("WoW Addon Manager tests PASS: API key, TOC parser, edition matching, safe ZIP extraction, traversal blocking, install discovery, uninstall, and NSNull resilience.\n");
+        // 8. Test Check For Updates without API Key
+        [TKWoWAddonManager setApiKey:nil];
+        TKWoWAddonManager *mgr = [TKWoWAddonManager new];
+        __block BOOL checkDone = NO;
+        __block NSArray *checkUpdates = nil;
+        __block NSError *checkError = nil;
+        [mgr checkForUpdatesForProduct:product library:nil completion:^(NSArray<NSDictionary *> *u, NSError *e) {
+            checkUpdates = u;
+            checkError = e;
+            checkDone = YES;
+        }];
+        while (!checkDone) {
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+        assert(checkUpdates.count == 0);
+        assert(checkError != nil && checkError.code == 401);
+
+        // 9. Test Check For Updates with Available Update
+        [TKWoWAddonManager setApiKey:@"test-key"];
+        NSString *manifestPath = [addonsDir stringByAppendingPathComponent:@".installed_addons.json"];
+        NSArray *testManifest = @[@{
+            @"id": @(99999),
+            @"name": @"TestMod",
+            @"version": @"1.0.0",
+            @"fileId": @(100),
+            @"fileName": @"test-1.0.0.zip",
+            @"folders": @[@"TestMod"]
+        }];
+        NSData *mfcData = [NSJSONSerialization dataWithJSONObject:testManifest options:0 error:NULL];
+        [mfcData writeToFile:manifestPath atomically:YES];
+
+        TestUpdateAddonManager *testMgr = [TestUpdateAddonManager new];
+        testMgr.installedUpdateCalls = [NSMutableArray new];
+        testMgr.mockFiles = @[@{
+            @"id": @(200),
+            @"displayName": @"TestMod 1.1.0",
+            @"fileName": @"test-1.1.0.zip",
+            @"gameVersions": @[@"1.60.1", @"Forever", @"Classic Era"],
+            @"releaseType": @(1),
+            @"isAvailable": @YES
+        }];
+
+        checkDone = NO;
+        checkUpdates = nil;
+        [testMgr checkForUpdatesForProduct:product library:nil completion:^(NSArray<NSDictionary *> *u, NSError *e) {
+            (void)e;
+            checkUpdates = u;
+            checkDone = YES;
+        }];
+        while (!checkDone) {
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+        assert(checkUpdates.count == 1);
+        assert([checkUpdates[0][@"modId"] isEqual:@(99999)]);
+        assert([checkUpdates[0][@"currentVersion"] isEqual:@"1.0.0"]);
+        assert([checkUpdates[0][@"updateVersion"] isEqual:@"TestMod 1.1.0"]);
+        assert([checkUpdates[0][@"updateFileId"] isEqual:@(200)]);
+
+        // 10. Test Install Updates
+        __block BOOL installDone = NO;
+        __block NSUInteger progressCount = 0;
+        __block NSArray *installErrors = nil;
+        [testMgr installUpdates:checkUpdates product:product library:nil progress:^(NSUInteger completed, NSUInteger total, NSString *addonName) {
+            assert(completed == 1);
+            assert(total == 1);
+            assert([addonName isEqual:@"TestMod"]);
+            progressCount++;
+        } completion:^(NSArray<NSError *> *errors) {
+            installErrors = errors;
+            installDone = YES;
+        }];
+        while (!installDone) {
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+        assert(installDone);
+        assert(progressCount == 1);
+        assert(installErrors.count == 0);
+        assert(testMgr.installedUpdateCalls.count == 1);
+
+        // Cleanup test manifest
+        [NSFileManager.defaultManager removeItemAtPath:manifestPath error:NULL];
+        [TKWoWAddonManager setApiKey:nil];
+
+        printf("WoW Addon Manager tests PASS: API key, TOC parser, edition matching, safe ZIP extraction, traversal blocking, install discovery, uninstall, update check, batch update, and NSNull resilience.\n");
     }
     return 0;
 }

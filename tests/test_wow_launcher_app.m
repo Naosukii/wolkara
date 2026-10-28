@@ -13,6 +13,7 @@
 - (void)refresh;
 - (void)about;
 - (void)repairInstallation;
+- (void)choosePreference:(BOOL)region;
 @end
 static atomic_uint requests, revision, updates, repairs;
 static atomic_bool failure, slow, interruptRepair;

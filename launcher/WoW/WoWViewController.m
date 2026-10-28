@@ -4,6 +4,7 @@
 #import "Updater.h"
 #import "AddonManager.h"
 #import "AddonViewController.h"
+#import "BackupManager.h"
 #import "CASC.h"
 #import "../App/LaunchProgressView.h"
 
@@ -31,6 +32,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSDate *_checkedAt;
     NSUInteger _generation;
     BOOL _busy, _updating, _updateError, _starting;
+    BOOL _hasCheckedAddonUpdatesAtStartup;
+    BOOL _checkingAddonUpdates;
     NSString *_startupFailure;
     UILabel *_updatesLabel;
     NSString *_updatePhase;
@@ -169,7 +172,11 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
     _columns.alignment=horizontal?UIStackViewAlignmentTop:UIStackViewAlignmentFill;
 }
-- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; if (!_busy && !_sessionUsed && !_starting) [self refresh]; }
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (!_busy && !_sessionUsed && !_starting) [self refresh];
+    [self checkAddonUpdatesAtStartupIfNeeded];
+}
 - (void)viewDidDisappear:(BOOL)animated { [super viewDidDisappear:animated]; [self cancel]; }
 - (void)foreground:(NSNotification *)note {
     (void)note;
@@ -285,6 +292,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
                 self.view.window && self.navigationController.topViewController==self && self.startApp) {
                 [self applyLocaleToConfig:self->_locale];
                 self.startApp(installation.app);
+            } else if (!self->_hasCheckedAddonUpdatesAtStartup) {
+                [self checkAddonUpdatesAtStartupIfNeeded];
             }
         });
     });
@@ -498,8 +507,17 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [sheet addAction:[UIAlertAction actionWithTitle:@"Add-on Manager" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self openAddons];
     }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Check for add-on updates" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self checkAddonUpdatesPromptUser:YES manual:YES];
+    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"CurseForge API Key" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self promptForAPIKey];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Export WTF & Add-ons Backup" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self exportBackup];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Import WTF & Add-ons Backup" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self importBackup];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Diagnostics and logs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self diagnostics];
@@ -562,6 +580,17 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [_launchProgress stop]; _diagnosticsButton.hidden=!failed;
     [self render];
 }
+- (void)exportBackup {
+    if (_busy || _starting || _sessionUsed) return;
+    [TKWoWBackupManager presentExportForProduct:_product library:_library fromViewController:self anchorItem:self.navigationItem.rightBarButtonItem];
+}
+- (void)importBackup {
+    if (_busy || _starting || _sessionUsed) return;
+    __weak typeof(self) weakSelf = self;
+    [TKWoWBackupManager presentImportForProduct:_product library:_library fromViewController:self completion:^(BOOL success) {
+        if (success) [weakSelf render];
+    }];
+}
 - (void)diagnostics { if (self.showDiagnostics) self.showDiagnostics(); }
 - (void)about {
     UIViewController *controller=[UIViewController new]; controller.title=@"About";
@@ -578,4 +607,164 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     text.text=credits; controller.view=text;
     [self.navigationController pushViewController:controller animated:YES];
 }
+
+- (void)checkAddonUpdatesPromptUser:(BOOL)promptUser {
+    [self checkAddonUpdatesPromptUser:promptUser manual:NO];
+}
+
+- (void)checkAddonUpdatesAtStartupIfNeeded {
+    if (_hasCheckedAddonUpdatesAtStartup) return;
+    _hasCheckedAddonUpdatesAtStartup = YES;
+    [self checkAddonUpdatesPromptUser:YES manual:NO];
+}
+
+- (void)checkAddonUpdatesPromptUser:(BOOL)promptUser manual:(BOOL)manual {
+    if (_checkingAddonUpdates || _starting || _sessionUsed) return;
+    if (![TKWoWAddonManager hasApiKey]) {
+        if (manual) [self promptForAPIKey];
+        return;
+    }
+    if (_installation && _installation.state != TKWoWInstallationReady) return;
+
+    NSArray<NSDictionary *> *installed = [TKWoWAddonManager installedAddonsForProduct:_product library:_library];
+    BOOL hasCurseAddons = NO;
+    for (NSDictionary *addon in installed) {
+        if ([TKSafeNumber(addon[@"id"], @(0)) integerValue] > 0) {
+            hasCurseAddons = YES;
+            break;
+        }
+    }
+    if (!hasCurseAddons) {
+        if (manual) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"No Add-ons"
+                                                                           message:@"No managed CurseForge add-ons are installed for this edition."
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+        }
+        return;
+    }
+
+    _checkingAddonUpdates = YES;
+    TKWoWAddonManager *manager = [TKWoWAddonManager new];
+    NSDictionary *targetProduct = _product;
+
+    [manager checkForUpdatesForProduct:targetProduct library:_library completion:^(NSArray<NSDictionary *> *updates, NSError *error) {
+        self->_checkingAddonUpdates = NO;
+        if (self->_starting || self->_sessionUsed || ![self->_product[@"id"] isEqual:targetProduct[@"id"]]) {
+            return;
+        }
+        if (error) {
+            if (manual) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Update Check Failed"
+                                                                               message:error.localizedDescription
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            }
+            return;
+        }
+        if (updates.count == 0) {
+            if (manual) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Add-ons Up to Date"
+                                                                               message:@"All installed add-ons are up to date."
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            }
+            return;
+        }
+        if (promptUser) {
+            [self promptToInstallAddonUpdates:updates manager:manager];
+        }
+    }];
+}
+
+- (void)promptToInstallAddonUpdates:(NSArray<NSDictionary *> *)updates manager:(TKWoWAddonManager *)manager {
+    if (!self.isViewLoaded || !self.view.window || _starting || _sessionUsed) return;
+
+    NSString *title = nil;
+    NSString *message = nil;
+
+    if (updates.count == 1) {
+        NSDictionary *item = updates.firstObject;
+        NSString *name = item[@"name"] ?: @"Add-on";
+        NSString *curVer = item[@"currentVersion"] ?: @"";
+        NSString *newVer = item[@"updateVersion"] ?: @"";
+        title = @"Add-on Update Available";
+        if (curVer.length > 0 && newVer.length > 0) {
+            message = [NSString stringWithFormat:@"An update is available for %@ (%@ → %@).\n\nWould you like to install it now?", name, curVer, newVer];
+        } else if (newVer.length > 0) {
+            message = [NSString stringWithFormat:@"An update is available for %@ (%@).\n\nWould you like to install it now?", name, newVer];
+        } else {
+            message = [NSString stringWithFormat:@"An update is available for %@.\n\nWould you like to install it now?", name];
+        }
+    } else {
+        title = [NSString stringWithFormat:@"%lu Add-on Updates Available", (unsigned long)updates.count];
+        NSMutableString *list = [@"Updates are available for the following add-ons:\n" mutableCopy];
+        for (NSDictionary *item in updates) {
+            NSString *name = item[@"name"] ?: @"Add-on";
+            NSString *curVer = item[@"currentVersion"] ?: @"";
+            NSString *newVer = item[@"updateVersion"] ?: @"";
+            if (curVer.length > 0 && newVer.length > 0) {
+                [list appendFormat:@"\n• %@ (%@ → %@)", name, curVer, newVer];
+            } else if (newVer.length > 0) {
+                [list appendFormat:@"\n• %@ (%@)", name, newVer];
+            } else {
+                [list appendFormat:@"\n• %@", name];
+            }
+        }
+        [list appendString:@"\n\nWould you like to install all updates now?"];
+        message = list;
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Later" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:(updates.count == 1 ? @"Update Now" : @"Install All Updates")
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        (void)action;
+        [self performBatchAddonUpdates:updates manager:manager];
+    }]];
+
+    UIViewController *presenter = self.presentedViewController ?: self;
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)performBatchAddonUpdates:(NSArray<NSDictionary *> *)updates manager:(TKWoWAddonManager *)manager {
+    if (_starting || _sessionUsed) return;
+
+    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"Updating Add-ons"
+                                                                           message:@"Preparing downloads…"
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+    UIViewController *presenter = self.presentedViewController ?: self;
+    [presenter presentViewController:progressAlert animated:YES completion:^{
+        [manager installUpdates:updates product:self->_product library:self->_library progress:^(NSUInteger completed, NSUInteger total, NSString *addonName) {
+            progressAlert.message = [NSString stringWithFormat:@"Updating %@ (%lu of %lu)…", addonName, (unsigned long)completed, (unsigned long)total];
+        } completion:^(NSArray<NSError *> *errors) {
+            [progressAlert dismissViewControllerAnimated:YES completion:^{
+                [self render];
+                if (errors.count > 0) {
+                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Updates Incomplete"
+                                                                                   message:[NSString stringWithFormat:@"Completed with %lu error(s).", (unsigned long)errors.count]
+                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                    [errAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:errAlert animated:YES completion:nil];
+                } else {
+                    UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"Add-ons Updated"
+                                                                                    message:(updates.count == 1 ?
+                                                                                             @"The add-on was successfully updated." :
+                                                                                             @"All add-ons were successfully updated.")
+                                                                             preferredStyle:UIAlertControllerStyleAlert];
+                    [doneAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:doneAlert animated:YES completion:nil];
+                }
+            }];
+        }];
+    }];
+}
+
 @end

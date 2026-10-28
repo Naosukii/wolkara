@@ -49,6 +49,16 @@ static inline NSNumber * _Nullable TKSafeNumber(id _Nullable val, NSNumber * _Nu
             progress:(nullable void (^)(float progress, NSString *status))progress
           completion:(void (^)(BOOL success, NSError * _Nullable error))completion;
 
+- (void)checkForUpdatesForProduct:(NSDictionary *)product
+                          library:(nullable TKAppLibrary *)library
+                       completion:(void (^)(NSArray<NSDictionary *> * _Nullable updates, NSError * _Nullable error))completion;
+
+- (void)installUpdates:(NSArray<NSDictionary *> *)updates
+               product:(NSDictionary *)product
+               library:(nullable TKAppLibrary *)library
+              progress:(nullable void (^)(NSUInteger completed, NSUInteger total, NSString *addonName))progress
+            completion:(void (^)(NSArray<NSError *> * _Nullable errors))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END
